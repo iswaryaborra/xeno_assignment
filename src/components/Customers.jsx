@@ -16,7 +16,7 @@ import {
   Loader2
 } from 'lucide-react';
 
-export default function Customers({ customers, setCustomers, initialOpenImport = false }) {
+export default function Customers({ customers, setCustomers, initialOpenImport = false, backendOnline = false, onReload }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCity, setSelectedCity] = useState('All');
   const [selectedTag, setSelectedTag] = useState('All');
@@ -109,7 +109,7 @@ export default function Customers({ customers, setCustomers, initialOpenImport =
 
     const reader = new FileReader();
 
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const text = event.target.result;
         const rows = parseCSV(text);
@@ -118,21 +118,45 @@ export default function Customers({ customers, setCustomers, initialOpenImport =
         if (rows.length > 0) {
           newShoppers = rows.map((row, i) => rowToCustomer(row, i));
         } else {
-          // Fallback demo records when file is empty / no recognisable columns
           newShoppers = [
             rowToCustomer({ name: 'Amit Patel (Demo)', email: 'amit@example.com', phone: '+91 95000 12345', city: 'Mumbai', spend: '11200' }, 0),
             rowToCustomer({ name: 'Shalini Nair (Demo)', email: 'shalini@example.com', phone: '+91 97000 67890', city: 'Bangalore', spend: '8500' }, 1),
           ];
         }
 
-        setCustomers(prev => [...newShoppers, ...prev]);
-        setIsImporting(false);
-        setImportResult({
-          success: true,
-          message: `${newShoppers.length} customer${newShoppers.length !== 1 ? 's' : ''} imported from "${csvFile.name}" successfully!`
-        });
+        if (backendOnline) {
+          // Persist to database
+          const { customersApi } = await import('../services/api');
+          const result = await customersApi.bulkImport(newShoppers.map(s => ({
+            name: s.name,
+            email: s.email,
+            phone: s.phone,
+            city: s.city,
+            totalOrders: s.totalOrders,
+            totalSpend: s.totalSpend,
+            lastPurchaseDate: s.lastPurchaseDate,
+            tags: s.tags,
+            channelPreference: s.channelPreference,
+          })));
 
-        // Auto-close after 1.8 s
+          setIsImporting(false);
+          setImportResult({
+            success: true,
+            message: `${result.imported} customer${result.imported !== 1 ? 's' : ''} imported to database! (${result.skipped} skipped)`
+          });
+
+          // Reload from DB
+          if (onReload) setTimeout(onReload, 500);
+        } else {
+          // Offline: update in-memory only
+          setCustomers(prev => [...newShoppers, ...prev]);
+          setIsImporting(false);
+          setImportResult({
+            success: true,
+            message: `${newShoppers.length} customer${newShoppers.length !== 1 ? 's' : ''} imported from "${csvFile.name}" (offline mode — not persisted)`
+          });
+        }
+
         setTimeout(() => {
           setShowImportModal(false);
           setCsvFile(null);
@@ -141,7 +165,7 @@ export default function Customers({ customers, setCustomers, initialOpenImport =
 
       } catch (err) {
         setIsImporting(false);
-        setImportResult({ success: false, message: `Parse error: ${err.message}. Check your CSV format.` });
+        setImportResult({ success: false, message: `Import error: ${err.message}` });
       }
     };
 
